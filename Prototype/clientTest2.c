@@ -74,41 +74,19 @@ int main(int argc, char* argv[]){
         }
 
 	//messaging
-	while (1) {
-		char msg[1024];
-
-		// ---- RECEIVE ----
-		ssize_t bytes_received = recv(cliSocket, msg, sizeof(msg) - 1, 0);
-		if (bytes_received <= 0) {
-			printf("Server disconnected or recv error.\n");
-			break;
+		//messaging
+		int quit = 0;
+		char msgBuff[1025];   //1024 +1 for delimiter \0
+		while(quit == 0){
+			printf("Client> ");
+			fgets(msgBuff, 1024, stdin);	//will store \n from stdin into msgBuff
+			write(cliSocket, msgBuff, 1024);	//will write \n from msgBuff
+			read(cliSocket, msgBuff, 1024);
+			printf("Server> %s\n", msgBuff);
+			if(msgBuff[0] == '~'){
+				quit = 1;
+			}
 		}
-
-		msg[bytes_received] = '\0';
-		printf("Server says: %s\n", msg);
-
-		// ---- SEND ----
-		printf("Client, enter your message...\n");
-		if (fgets(msg, sizeof(msg), stdin) == NULL) {
-			printf("Input error!\n");
-			break;
-		}
-
-		size_t len = strlen(msg);
-		if (send(cliSocket, msg, len, 0) == -1) {
-			perror("send failed");
-			break;
-		}
-
-		if (msg[0] == '~') {
-			printf("Client exiting chat.\n");
-			break;
-		}
-	}
-
-
-	//close socket
-    close(cliSocket);
 
 	return 0;
 }
