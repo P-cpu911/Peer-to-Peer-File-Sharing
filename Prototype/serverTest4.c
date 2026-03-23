@@ -91,7 +91,7 @@ int main() {
             }
         }
 
-        // Handle Clients
+        // Handle clients
         for (int i = 0; i < MAX_CLIENT_ACTIVE; i++) {
             int sd = clientFDs[i];
 
