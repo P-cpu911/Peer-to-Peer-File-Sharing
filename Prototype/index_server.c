@@ -5,16 +5,42 @@
 #include <arpa/inet.h>
 
 #define PORT 8784
-#define MAX 100
+#define MAX_FILES 100
+#define MAX_PEERS 10
+
+typedef struct {
+    char ip[64];
+    int port;
+} Peer;
 
 typedef struct {
     char filename[256];
-    char ip[64];
-    int port;
+    int size;
+    Peer peers[MAX_PEERS];
+    int peerCount;
 } FileEntry;
 
-FileEntry db[MAX];
+FileEntry db[MAX_FILES];
 int dbSize = 0;
+
+// find file
+int findFile(char* filename){
+    for(int i = 0; i < dbSize; i++){
+        if(strcmp(db[i].filename, filename) == 0)
+            return i;
+    }
+    return -1;
+}
+
+// check duplicate peer
+int peerExists(int idx, char* ip, int port){
+    for(int i = 0; i < db[idx].peerCount; i++){
+        if(strcmp(db[idx].peers[i].ip, ip) == 0 &&
+           db[idx].peers[i].port == port)
+            return 1;
+    }
+    return 0;
+}
 
 int main(){
     int server_fd, new_socket;
@@ -39,42 +65,57 @@ int main(){
         memset(buffer, 0, sizeof(buffer));
         read(new_socket, buffer, sizeof(buffer));
 
-        printf("Received: %s\n", buffer);
-
         char command[16], filename[256], ip[64];
-        int port;
+        int port, size;
 
-        sscanf(buffer, "%s %s %s %d", command, filename, ip, &port);
+        sscanf(buffer, "%s %s %d %s %d", command, filename, &size, ip, &port);
 
-        // SEED command
+        // SEED
         if(strcmp(command, "SEED") == 0){
-            strcpy(db[dbSize].filename, filename);
-            strcpy(db[dbSize].ip, ip);
-            db[dbSize].port = port;
-            dbSize++;
+            int idx = findFile(filename);
 
-            char reply[] = "OK\n";
-            send(new_socket, reply, strlen(reply), 0);
+            if(idx == -1){
+                idx = dbSize++;
+                strcpy(db[idx].filename, filename);
+                db[idx].size = size;
+                db[idx].peerCount = 0;
+            }
+
+            if(!peerExists(idx, ip, port)){
+                int p = db[idx].peerCount;
+                strcpy(db[idx].peers[p].ip, ip);
+                db[idx].peers[p].port = port;
+                db[idx].peerCount++;
+            }
+
+            printf("Registered: %s (%d bytes)\n", filename, size);
+
+            send(new_socket, "OK\n", 3, 0);
         }
 
-        // SEARCH command
+        // SEARCH
         else if(strcmp(command, "SEARCH") == 0){
-            int found = 0;
+            char reply[2048] = "";
 
             for(int i = 0; i < dbSize; i++){
-                if(strcmp(db[i].filename, filename) == 0){
-                    char reply[256];
-                    sprintf(reply, "%s %d\n", db[i].ip, db[i].port);
-                    send(new_socket, reply, strlen(reply), 0);
-                    found = 1;
-                    break;
+                if(strstr(db[i].filename, filename) != NULL){
+                    for(int j = 0; j < db[i].peerCount; j++){
+                        char line[256];
+                        sprintf(line, "%s %d -> %s:%d\n",
+                            db[i].filename,
+                            db[i].size,
+                            db[i].peers[j].ip,
+                            db[i].peers[j].port);
+                        strcat(reply, line);
+                    }
                 }
             }
 
-            if(!found){
-                char reply[] = "NOTFOUND\n";
-                send(new_socket, reply, strlen(reply), 0);
+            if(strlen(reply) == 0){
+                strcpy(reply, "NOTFOUND\n");
             }
+
+            send(new_socket, reply, strlen(reply), 0);
         }
 
         close(new_socket);
