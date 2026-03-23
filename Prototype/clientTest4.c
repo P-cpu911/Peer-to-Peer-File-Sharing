@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
         if (fgets(msgBuff, BUFFER_SIZE, stdin) == NULL)
             break;
 
-        send(cliSocket, msgBuff, strlen(msgBuff), 0); // ✅ FIXED
+        send(cliSocket, msgBuff, strlen(msgBuff), 0); 
 
         ssize_t byteRead = recv(cliSocket, msgBuff, BUFFER_SIZE - 1, 0);
 
