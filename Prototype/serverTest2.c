@@ -13,7 +13,7 @@ int main() {
     struct sockaddr_in sockaddr;
     sockaddr.sin_family = AF_INET;
     sockaddr.sin_port = htons(PORT);
-    sockaddr.sin_addr.s_addr = htonl(INADDR_ANY); // ✅ FIXED
+    sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
     memset(sockaddr.sin_zero, 0, 8);
 
     printf("Starting socket...\n");
