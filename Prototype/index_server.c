@@ -53,7 +53,6 @@ void* handle_client(void* arg) {
             db[idx].size = size;
             db[idx].peerCount = 0;
         }
-        // Check duplicate
         int exists = 0;
         for(int i=0; i<db[idx].peerCount; i++) {
             if(db[idx].peers[i].port == port && strcmp(db[idx].peers[i].ip, ip) == 0) exists = 1;
@@ -63,7 +62,7 @@ void* handle_client(void* arg) {
             db[idx].peers[db[idx].peerCount].port = port;
             db[idx].peerCount++;
         }
-        printf("Registered: %s from %s:%d\n", filename, ip, port);
+        printf("[INDEX] Registered: %s (%d bytes) from %s:%d\n", filename, size, ip, port);
         send(new_socket, "OK\n", 3, 0);
     } 
     else if(strcmp(command, "SEARCH") == 0){
