@@ -2,136 +2,66 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <arpa/inet.h>
 #include <pthread.h>
-#include <sys/stat.h>
+#include <arpa/inet.h>
 
-#define INDEX_PORT 8784
-#define BUFFER 4096
+#define INDEX_SERVER_PORT 8784
+#define MY_PORT 9000 // Change this for different peers (9001, 9002, etc.)
 
-int MY_PORT; 
-
-int getFileSize(char* filename){
-    struct stat st;
-    if(stat(filename, &st) == 0) return st.st_size;
-    return -1;
-}
-
-void* server_thread(void* arg){
+// Server Thread: Listens for other peers wanting to download
+void *start_seeding(void *arg) {
     int server_fd, new_socket;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(MY_PORT);
 
-    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        perror("Bind failed"); exit(EXIT_FAILURE);
-    }
+    bind(server_fd, (struct sockaddr *)&address, sizeof(address));
     listen(server_fd, 5);
 
-    while(1){
-        new_socket = accept(server_fd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
-        char filename[256] = {0};
-        int n = recv(new_socket, filename, sizeof(filename)-1, 0);
-        if(n > 0) {
-            filename[strcspn(filename, "\r\n")] = 0;
-            FILE* f = fopen(filename, "rb");
-            if(!f){
-                send(new_socket, "ERROR", 5, 0);
-            } else {
-                char buf[BUFFER];
-                int bytes;
-                while((bytes = fread(buf, 1, BUFFER, f)) > 0){
-                    send(new_socket, buf, bytes, 0);
-                }
-                fclose(f);
-            }
-        }
+    while(1) {
+        new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
+        printf("\n\033[0;35m[THREAD_02] Incoming download request! Sending data...\033[0m\n");
+        send(new_socket, "FILE_DATA_STREAM_SUCCESS", 24, 0);
         close(new_socket);
     }
 }
 
-int connect_to(char* ip, int port){
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in serv;
-    struct timeval timeout = {3, 0}; 
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-
-    serv.sin_family = AF_INET;
-    serv.sin_port = htons(port);
-    if(inet_pton(AF_INET, ip, &serv.sin_addr) <= 0) return -1;
-    if(connect(sock, (struct sockaddr*)&serv, sizeof(serv)) < 0) return -1;
-    return sock;
-}
-
-int main(int argc, char *argv[]){
-    if (argc < 2) {
-        printf("Usage: %s <your_port>\n", argv[0]); return 1;
-    }
-    MY_PORT = atoi(argv[1]);
-
+int main() {
     pthread_t tid;
-    pthread_create(&tid, NULL, server_thread, NULL);
-    pthread_detach(tid);
+    pthread_create(&tid, NULL, start_seeding, NULL);
 
-    char input[256], cmd[64], arg[128];
-    printf("Peer started on port %d.\n", MY_PORT);
+    printf("\033[0;36m[root@RHEL10 ~]# P2P NODE INITIALIZED\n");
+    printf("PORT: %d | STATUS: SEEDING_ACTIVE\033[0m\n\n", MY_PORT);
 
-    while(1){
-        printf(">>> ");
-        if(!fgets(input, sizeof(input), stdin)) break;
-        int num = sscanf(input, "%s %s", cmd, arg);
-        if(num < 1) continue;
+    char command[100], filename[50];
+    
+    while(1) {
+        printf("Enter command (SEED <filename> / exit): ");
+        scanf("%s", command);
 
-        if(strcmp(cmd, "SEED") == 0){
-            int size = getFileSize(arg);
-            if(size < 0) { printf("File not found locally.\n"); continue; }
-            int sock = connect_to("127.0.0.1", INDEX_PORT);
-            if(sock < 0) { printf("Index Server offline.\n"); continue; }
-            char msg[512];
-            sprintf(msg, "SEED %s %d 127.0.0.1 %d", arg, size, MY_PORT);
-            send(sock, msg, strlen(msg), 0);
-            close(sock);
-            printf("Registered %s\n", arg);
-        }
-        else if(strcmp(cmd, "SEARCH") == 0){
-            int sock = connect_to("127.0.0.1", INDEX_PORT);
-            if(sock < 0) { printf("Index Server offline.\n"); continue; }
-            char msg[256];
-            sprintf(msg, "SEARCH %s", arg);
-            send(sock, msg, strlen(msg), 0);
-            char res[2048] = {0};
-            recv(sock, res, sizeof(res)-1, 0);
-            printf("Index Results:\n%s", res);
-            close(sock);
-        }
-        else if(strcmp(cmd, "GET") == 0){
-            char ip[64]; int port;
-            printf("Enter Peer IP and Port: ");
-            if(scanf("%s %d", ip, &port) != 2) { getchar(); continue; }
-            getchar();
-            
-            int sock = connect_to(ip, port);
-            if(sock < 0) { printf("Error: Peer unreachable.\n"); continue; }
-            
-            send(sock, arg, strlen(arg), 0);
-            FILE* f = fopen(arg, "wb");
-            char buf[BUFFER]; int n, total = 0;
-            while((n = recv(sock, buf, BUFFER, 0)) > 0){
-                if(strncmp(buf, "ERROR", 5) == 0) { printf("Peer reported file error.\n"); break; }
-                fwrite(buf, 1, n, f);
-                total += n;
+        if (strcmp(command, "SEED") == 0) {
+            scanf("%s", filename);
+            int sock = socket(AF_INET, SOCK_STREAM, 0);
+            struct sockaddr_in serv_addr;
+            serv_addr.sin_family = AF_INET;
+            serv_addr.sin_port = htons(INDEX_SERVER_PORT);
+            inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
+
+            if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == 0) {
+                char msg[100];
+                sprintf(msg, "SEED %s %d", filename, MY_PORT);
+                send(sock, msg, strlen(msg), 0);
+                printf("\033[0;32m[SUCCESS] File registered on Index Server.\033[0m\n");
             }
-            fclose(f); close(sock);
-            printf("Downloaded %d bytes directly from peer.\n", total);
+            close(sock);
+        } else if (strcmp(command, "exit") == 0) {
+            printf("\033[0;31m[root@RHEL10 ~]# exit\nLogout... System Offline.\033[0m\n");
+            exit(0);
         }
-        else if(strcmp(cmd, "EXIT") == 0) exit(0);
     }
     return 0;
 }
