@@ -3,32 +3,27 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netdb.h>
 #include <pthread.h>
+#include <sys/stat.h>
 
 #define INDEX_PORT 8784
 #define PEER_PORT 9000
-#define BUFFER 1024
+#define BUFFER 4096
 
-// File size
 int getFileSize(char* filename){
-    FILE* f = fopen(filename, "rb");
-    if(!f) return -1;
-    fseek(f, 0, SEEK_END);
-    int size = ftell(f);
-    fclose(f);
-    return size;
+    struct stat st;
+    if(stat(filename, &st) == 0) return st.st_size;
+    return -1;
 }
 
-// Server thread
 void* server_thread(void* arg){
     int server_fd, new_socket;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
-    char filename[256];
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
@@ -36,45 +31,43 @@ void* server_thread(void* arg){
 
     bind(server_fd, (struct sockaddr*)&address, sizeof(address));
     listen(server_fd, 5);
-
-    printf("Peer server running on %d\n", PEER_PORT);
+    printf("Listening for downloads on port %d...\n", PEER_PORT);
 
     while(1){
         new_socket = accept(server_fd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
-
-        read(new_socket, filename, sizeof(filename));
-        filename[strcspn(filename, "\n")] = '\0';
-
-        FILE* f = fopen(filename, "rb");
-
-        if(!f){
-            send(new_socket, "ERROR\n", 6, 0);
-        } else {
-            char buf[BUFFER];
-            int n;
-            while((n = fread(buf, 1, BUFFER, f)) > 0){
-                send(new_socket, buf, n, 0);
+        char filename[256] = {0};
+        int n = recv(new_socket, filename, sizeof(filename)-1, 0);
+        if(n > 0) {
+            filename[strcspn(filename, "\r\n")] = 0;
+            FILE* f = fopen(filename, "rb");
+            if(!f){
+                send(new_socket, "ERROR", 5, 0);
+            } else {
+                char buf[BUFFER];
+                int bytes;
+                while((bytes = fread(buf, 1, BUFFER, f)) > 0){
+                    send(new_socket, buf, bytes, 0);
+                }
+                fclose(f);
             }
-            fclose(f);
         }
-
         close(new_socket);
     }
 }
 
-// Connect helper
 int connect_to(char* ip, int port){
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in serv;
+    struct timeval timeout;
+    timeout.tv_sec = 3; // 3 second timeout for "Offline" check
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
     serv.sin_family = AF_INET;
     serv.sin_port = htons(port);
-    inet_pton(AF_INET, ip, &serv.sin_addr);
+    if(inet_pton(AF_INET, ip, &serv.sin_addr) <= 0) return -1;
 
-    if(connect(sock, (struct sockaddr*)&serv, sizeof(serv)) < 0){
-        return -1;
-    }
-
+    if(connect(sock, (struct sockaddr*)&serv, sizeof(serv)) < 0) return -1;
     return sock;
 }
 
@@ -83,88 +76,55 @@ int main(){
     pthread_create(&tid, NULL, server_thread, NULL);
 
     char input[256], cmd[64], arg[128];
+    printf("Commands: SEED <file>, SEARCH <file>, GET <file>, EXIT\n");
 
     while(1){
         printf(">>> ");
-        fgets(input, sizeof(input), stdin);
-        input[strcspn(input, "\n")] = 0;
+        if(!fgets(input, sizeof(input), stdin)) break;
+        int num = sscanf(input, "%s %s", cmd, arg);
+        if(num < 1) continue;
 
-        sscanf(input, "%s %s", cmd, arg);
-
-        // Seed
         if(strcmp(cmd, "SEED") == 0){
             int size = getFileSize(arg);
-
-            char msg[256];
-            sprintf(msg, "SEED %s %d 127.0.0.1 %d\n", arg, size, PEER_PORT);
-
+            if(size < 0) { printf("File not found locally.\n"); continue; }
             int sock = connect_to("127.0.0.1", INDEX_PORT);
+            char msg[512];
+            // Replace 127.0.0.1 with your actual LAN IP for multi-computer demo
+            sprintf(msg, "SEED %s %d 127.0.0.1 %d", arg, size, PEER_PORT);
             send(sock, msg, strlen(msg), 0);
-
-            char buf[128];
-            recv(sock, buf, sizeof(buf), 0);
-            printf("Index> %s", buf);
-
             close(sock);
+            printf("Registered %s (%d bytes)\n", arg, size);
         }
-
-        // Search
         else if(strcmp(cmd, "SEARCH") == 0){
-            char msg[256];
-            sprintf(msg, "SEARCH %s\n", arg);
-
             int sock = connect_to("127.0.0.1", INDEX_PORT);
+            char msg[256];
+            sprintf(msg, "SEARCH %s", arg);
             send(sock, msg, strlen(msg), 0);
-
-            char buf[2048];
-            int n = recv(sock, buf, sizeof(buf)-1, 0);
-            buf[n] = '\0';
-
-            printf("%s", buf);
-
+            char res[2048] = {0};
+            recv(sock, res, sizeof(res)-1, 0);
+            printf("Results:\n%s", res);
             close(sock);
         }
-
-        // Download
         else if(strcmp(cmd, "GET") == 0){
-            char ip[64];
-            int port;
-
-            printf("Enter peer IP and port: ");
-            scanf("%s %d", ip, &port);
-            getchar();
-
+            char ip[64]; int port;
+            printf("Enter Peer IP and Port: ");
+            scanf("%s %d", ip, &port); getchar();
+            
             int sock = connect_to(ip, port);
-            if(sock < 0){
-                printf("Error: Peer unreachable\n");
-                continue;
-            }
-
+            if(sock < 0) { printf("Error: Peer unreachable.\n"); continue; }
+            
             send(sock, arg, strlen(arg), 0);
-
             FILE* f = fopen(arg, "wb");
-            char buf[BUFFER];
-            int n, total = 0;
-
+            char buf[BUFFER]; int n, total = 0;
             while((n = recv(sock, buf, BUFFER, 0)) > 0){
+                if(strncmp(buf, "ERROR", 5) == 0) { printf("Peer reported file error.\n"); break; }
                 fwrite(buf, 1, n, f);
                 total += n;
             }
-
-            fclose(f);
-            close(sock);
-
-            printf("Downloaded %d bytes\n", total);
+            fclose(f); close(sock);
+            printf("Download complete. Received %d bytes.\n", total);
         }
-
-        else if(strcmp(cmd, "EXIT") == 0){
-            break;
-        }
-
-        else{
-            printf("Invalid command\n");
-        }
+        else if(strcmp(cmd, "EXIT") == 0) exit(0);
     }
-
     return 0;
 }
