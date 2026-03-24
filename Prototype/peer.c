@@ -7,8 +7,9 @@
 #include <sys/stat.h>
 
 #define INDEX_PORT 8784
-#define PEER_PORT 9000
 #define BUFFER 4096
+
+int MY_PORT; // Global port for this peer instance
 
 int getFileSize(char* filename){
     struct stat st;
@@ -16,6 +17,7 @@ int getFileSize(char* filename){
     return -1;
 }
 
+// Peer Server Thread: Listens for incoming download requests
 void* server_thread(void* arg){
     int server_fd, new_socket;
     struct sockaddr_in address;
@@ -27,11 +29,13 @@ void* server_thread(void* arg){
 
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PEER_PORT);
+    address.sin_port = htons(MY_PORT);
 
-    bind(server_fd, (struct sockaddr*)&address, sizeof(address));
+    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+        perror("Bind failed");
+        exit(EXIT_FAILURE);
+    }
     listen(server_fd, 5);
-    printf("Listening for downloads on port %d...\n", PEER_PORT);
 
     while(1){
         new_socket = accept(server_fd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
@@ -58,9 +62,7 @@ void* server_thread(void* arg){
 int connect_to(char* ip, int port){
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in serv;
-    struct timeval timeout;
-    timeout.tv_sec = 3; // 3 second timeout for "Offline" check
-    timeout.tv_usec = 0;
+    struct timeval timeout = {3, 0}; // 3s timeout for "Offline" requirement
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
     serv.sin_family = AF_INET;
@@ -71,12 +73,19 @@ int connect_to(char* ip, int port){
     return sock;
 }
 
-int main(){
+int main(int argc, char *argv[]){
+    if (argc < 2) {
+        printf("Usage: %s <your_port>\n", argv[0]);
+        return 1;
+    }
+    MY_PORT = atoi(argv[1]);
+
     pthread_t tid;
     pthread_create(&tid, NULL, server_thread, NULL);
+    pthread_detach(tid);
 
     char input[256], cmd[64], arg[128];
-    printf("Commands: SEED <file>, SEARCH <file>, GET <file>, EXIT\n");
+    printf("Peer started on port %d. Commands: SEED <file>, SEARCH <file>, GET <file>, EXIT\n", MY_PORT);
 
     while(1){
         printf(">>> ");
@@ -88,15 +97,16 @@ int main(){
             int size = getFileSize(arg);
             if(size < 0) { printf("File not found locally.\n"); continue; }
             int sock = connect_to("127.0.0.1", INDEX_PORT);
+            if(sock < 0) { printf("Index Server offline.\n"); continue; }
             char msg[512];
-            // Replace 127.0.0.1 with your actual LAN IP for multi-computer demo
-            sprintf(msg, "SEED %s %d 127.0.0.1 %d", arg, size, PEER_PORT);
+            sprintf(msg, "SEED %s %d 127.0.0.1 %d", arg, size, MY_PORT);
             send(sock, msg, strlen(msg), 0);
             close(sock);
             printf("Registered %s (%d bytes)\n", arg, size);
         }
         else if(strcmp(cmd, "SEARCH") == 0){
             int sock = connect_to("127.0.0.1", INDEX_PORT);
+            if(sock < 0) { printf("Index Server offline.\n"); continue; }
             char msg[256];
             sprintf(msg, "SEARCH %s", arg);
             send(sock, msg, strlen(msg), 0);
@@ -108,7 +118,8 @@ int main(){
         else if(strcmp(cmd, "GET") == 0){
             char ip[64]; int port;
             printf("Enter Peer IP and Port: ");
-            scanf("%s %d", ip, &port); getchar();
+            if(scanf("%s %d", ip, &port) != 2) { getchar(); continue; }
+            getchar();
             
             int sock = connect_to(ip, port);
             if(sock < 0) { printf("Error: Peer unreachable.\n"); continue; }
