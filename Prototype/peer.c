@@ -9,7 +9,7 @@
 #define INDEX_PORT 8784
 #define BUFFER 4096
 
-int MY_PORT; // Global port for this peer instance
+int MY_PORT; 
 
 int getFileSize(char* filename){
     struct stat st;
@@ -17,7 +17,6 @@ int getFileSize(char* filename){
     return -1;
 }
 
-// Peer Server Thread: Listens for incoming download requests
 void* server_thread(void* arg){
     int server_fd, new_socket;
     struct sockaddr_in address;
@@ -32,8 +31,7 @@ void* server_thread(void* arg){
     address.sin_port = htons(MY_PORT);
 
     if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        perror("Bind failed");
-        exit(EXIT_FAILURE);
+        perror("Bind failed"); exit(EXIT_FAILURE);
     }
     listen(server_fd, 5);
 
@@ -62,21 +60,19 @@ void* server_thread(void* arg){
 int connect_to(char* ip, int port){
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in serv;
-    struct timeval timeout = {3, 0}; // 3s timeout for "Offline" requirement
+    struct timeval timeout = {3, 0}; 
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
     serv.sin_family = AF_INET;
     serv.sin_port = htons(port);
     if(inet_pton(AF_INET, ip, &serv.sin_addr) <= 0) return -1;
-
     if(connect(sock, (struct sockaddr*)&serv, sizeof(serv)) < 0) return -1;
     return sock;
 }
 
 int main(int argc, char *argv[]){
     if (argc < 2) {
-        printf("Usage: %s <your_port>\n", argv[0]);
-        return 1;
+        printf("Usage: %s <your_port>\n", argv[0]); return 1;
     }
     MY_PORT = atoi(argv[1]);
 
@@ -85,7 +81,7 @@ int main(int argc, char *argv[]){
     pthread_detach(tid);
 
     char input[256], cmd[64], arg[128];
-    printf("Peer started on port %d. Commands: SEED <file>, SEARCH <file>, GET <file>, EXIT\n", MY_PORT);
+    printf("Peer started on port %d.\n", MY_PORT);
 
     while(1){
         printf(">>> ");
@@ -102,7 +98,7 @@ int main(int argc, char *argv[]){
             sprintf(msg, "SEED %s %d 127.0.0.1 %d", arg, size, MY_PORT);
             send(sock, msg, strlen(msg), 0);
             close(sock);
-            printf("Registered %s (%d bytes)\n", arg, size);
+            printf("Registered %s\n", arg);
         }
         else if(strcmp(cmd, "SEARCH") == 0){
             int sock = connect_to("127.0.0.1", INDEX_PORT);
@@ -112,7 +108,7 @@ int main(int argc, char *argv[]){
             send(sock, msg, strlen(msg), 0);
             char res[2048] = {0};
             recv(sock, res, sizeof(res)-1, 0);
-            printf("Results:\n%s", res);
+            printf("Index Results:\n%s", res);
             close(sock);
         }
         else if(strcmp(cmd, "GET") == 0){
@@ -133,7 +129,7 @@ int main(int argc, char *argv[]){
                 total += n;
             }
             fclose(f); close(sock);
-            printf("Download complete. Received %d bytes.\n", total);
+            printf("Downloaded %d bytes directly from peer.\n", total);
         }
         else if(strcmp(cmd, "EXIT") == 0) exit(0);
     }
